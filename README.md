@@ -143,13 +143,6 @@ guard.parse("""
 
 ## API Reference
 
-`__call__`
-- `query_function` Callable, optional: A callable that takes a string and returns a list of (chunk, score) tuples. In order to use this validator, you must provide either a query_function or sources with an embed_function in the metadata. The query_function should take a string as input and return a list of (chunk, score) tuples. The chunk is a string and the score is a float representing the cosine distance between the chunk and the input string. The list should be sorted in ascending order by score.
-- `sources` List[str], optional: The source text. In order to use this validator, you must provide either a query_function or sources with an embed_function in the metadata.
-- `embed_function` Callable, optional: A callable that creates embeddings for the sources. Must accept a list of strings and return an np.array of floats.
-
-
-
 **`__init__(self, validation_method="sentence", llm_callable="gpt-3.5-turbo", top_k=3, max_tokens=2, on_fail="noop")`**
 <ul>
 
