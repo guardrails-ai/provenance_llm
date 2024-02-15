@@ -35,7 +35,7 @@ The primary intended use is for RAG applications to check if a text is hallucina
 ## Installation
 
 ```bash
-$ gudardrails hub install hub://guardrails/provenance_llm
+$ guardrails hub install hub://guardrails/provenance_llm
 ```
 
 ## Usage Examples
