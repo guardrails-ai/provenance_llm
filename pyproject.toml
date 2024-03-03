@@ -1,16 +1,34 @@
 [project]
 name = "provenance_llm"
 version = "0.0.0"
-description = "Validates that the LLM-generated text is supported by the provided contexts."
+description = "Validates that the LLM-generated text is supported by the provided contexts using semantic similarity and LLM-based evaluation."
 authors = [
     {name = "Guardrails AI", email = "contact@guardrailsai.com"}
 ]
 license = {file = "LICENSE"}
 readme = "README.md"
-requires-python = ">= 3.8"
+requires-python = ">= 3.8.1"
 dependencies = [
+    "guardrails-ai>=0.4.0",
+    "litellm",
+    "nltk",
     "numpy",
-    "guardrails-ai>=0.3.2",
-    "pydantic>=2.4.2",
-    "pytest"
+    "tenacity"
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pyright",
+    "pytest",
+    "ruff"
+]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-rP"
+testpaths = [
+    "test"
+]
+
+[tool.pyright]
+include = ["validator"]

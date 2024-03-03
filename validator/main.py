@@ -1,14 +1,11 @@
-import contextvars
 import itertools
-import os
 import warnings
 from functools import partial
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
-from tenacity import retry, stop_after_attempt, wait_random_exponential
-
+import nltk
+import numpy as np
 from guardrails.utils.docs_utils import get_chunks_from_text
-from guardrails.utils.openai_utils import OpenAIClient
 from guardrails.utils.validator_utils import PROVENANCE_V1_PROMPT
 from guardrails.validator_base import (
     FailResult,
@@ -17,93 +14,37 @@ from guardrails.validator_base import (
     Validator,
     register_validator,
 )
+from litellm import completion
+from tenacity import retry, stop_after_attempt, wait_random_exponential
 
-try:
-    import numpy as np
-except ImportError:
-    _HAS_NUMPY = False
-else:
-    _HAS_NUMPY = True
-
-try:
-    import nltk  # type: ignore
-except ImportError:
-    nltk = None  # type: ignore
-
-if nltk is not None:
-    try:
-        nltk.data.find("tokenizers/punkt")
-    except LookupError:
-        nltk.download("punkt")
 
 @register_validator(name="guardrails/provenance_llm", data_type="string")
-class ProvenanceV1(Validator):
+class ProvenanceLLM(Validator):
     """Validates that the LLM-generated text is supported by the provided
-    contexts.
+    context.
 
     This validator uses an LLM callable to evaluate the generated text against the
-    provided contexts (LLM-ception).
+    provided context (from vector similarity).
 
-    In order to use this validator, you must provide either:
-    1. a 'query_function' in the metadata. That function should take a string as input
-        (the LLM-generated text) and return a list of relevant
-    chunks. The list should be sorted in ascending order by the distance between the
-        chunk and the LLM-generated text.
+    **Key Properties**
 
-    Example using str callable:
+    | Property                      | Description                         |
+    | ----------------------------- | ----------------------------------- |
+    | Name for `format` attribute   | `guardrails/provenance_llm`         |
+    | Supported data types          | `string`                            |
+    | Programmatic fix              | None                                |
 
-    ``` py
-    def query_function(text: str, k: int) -> List[str]:
-        return ["This is a chunk", "This is another chunk"]
-
-    guard = Guard.from_string(validators=[
-        ProvenanceV1(llm_callable="gpt-3.5-turbo", ...)
-    ])
-    guard.parse(
-        llm_output=...,
-        metadata={"query_function": query_function}
-    )
-    ```
-
-    Example using a custom llm callable:
-
-    ``` py
-    def query_function(text: str, k: int) -> List[str]:
-        return ["This is a chunk", "This is another chunk"]
-
-    guard = Guard.from_string(validators=[
-            ProvenanceV1(llm_callable=your_custom_callable, ...)
-        ]
-    )
-    guard.parse(
-        llm_output=...,
-        metadata={"query_function": query_function}
-    )
-    ```
-
-    OR
-
-    2. `sources` with an `embed_function` in the metadata. The embed_function should
-        take a string or a list of strings as input and return a np array of floats.
-    The vector should be normalized to unit length.
-
-    Example:
-
-    ```py
-    def embed_function(text: Union[str, List[str]]) -> np.ndarray:
-        return np.array([[0.1, 0.2, 0.3]])
-
-    guard = Guard.from_rail(...)
-    guard(
-        openai.ChatCompletion.create(...),
-        prompt_params={...},
-        temperature=0.0,
-        metadata={
-            "sources": ["This is a source text"],
-            "embed_function": embed_function
-        },
-    )
-    ```
+    Args:
+        validation_method (str, optional): The method to use for validation.
+            Must be either "sentence" or "full". Defaults to "sentence".
+        llm_callable (Union[str, Callable], optional): The LLM callable to use.
+            This can be either the model name string for LiteLLM, or a callable
+            that accepts a prompt and returns a response. Defaults to "gpt-3.5-turbo".
+        top_k (int, optional): The number of chunks to consider for similarity
+            comparison. Defaults to 3.
+        on_fail (Optional[Callable], optional): A callable to execute when the
+            validation fails. Defaults to None.
+        **kwargs: Additional keyword arguments.
     """
 
     def __init__(
@@ -111,138 +52,65 @@ class ProvenanceV1(Validator):
         validation_method: str = "sentence",
         llm_callable: Union[str, Callable] = "gpt-3.5-turbo",
         top_k: int = 3,
-        max_tokens: int = 2,
         on_fail: Optional[Callable] = None,
         **kwargs,
     ):
-        """
-        args:
-            validation_method (str): Whether to validate at the sentence level or over
-                the full text.  One of `sentence` or `full`. Defaults to `sentence`
-            llm_callable (Union[str, Callable]): Either the name of the OpenAI model,
-                or a callable that takes a prompt and returns a response.
-            top_k (int): The number of chunks to return from the query function.
-                Defaults to 3.
-            max_tokens (int): The maximum number of tokens to send to the LLM.
-                Defaults to 2.
-
-        Other args: Metadata
-            query_function (Callable): A callable that takes a string and returns a
-                list of chunks.
-            sources (List[str], optional): The source text.
-            embed_function (Callable, optional): A callable that creates embeddings for
-                the sources. Must accept a list of strings and returns float np.array.
-        """
         super().__init__(
             on_fail,
             validation_method=validation_method,
             llm_callable=llm_callable,
             top_k=top_k,
-            max_tokens=max_tokens,
             **kwargs,
         )
+
         if validation_method not in ["sentence", "full"]:
             raise ValueError("validation_method must be 'sentence' or 'full'.")
         self._validation_method = validation_method
+
+        if not isinstance(llm_callable, (str, Callable)):
+            raise ValueError(
+                "llm_callable must be either a string (model name for LiteLLM) "
+                " or a callable that accepts a prompt and returns a response."
+            )
+        # Set the LLM callable
         self.set_callable(llm_callable)
         self._top_k = int(top_k)
-        self._max_tokens = int(max_tokens)
-
-        self.client = OpenAIClient()
 
     def set_callable(self, llm_callable: Union[str, Callable]) -> None:
         """Set the LLM callable.
 
         Args:
-            llm_callable: Either the name of the OpenAI model, or a callable that takes
-                a prompt and returns a response.
+            llm_callable: Either the model name string for LiteLLM,
+                or a callable that accepts a prompt and returns a response.
         """
         if isinstance(llm_callable, str):
-            if llm_callable not in ["gpt-3.5-turbo", "gpt-4"]:
-                raise ValueError(
-                    "llm_callable must be one of 'gpt-3.5-turbo' or 'gpt-4'."
-                    "If you want to use a custom LLM, please provide a callable."
-                    "Check out ProvenanceV1 documentation for an example."
-                )
+            # Setup a LiteLLM callable
+            def litellm_callable(prompt: str) -> str:
+                # Get the LLM response
+                messages = [{"content": prompt, "role": "user"}]
+                try:
+                    val_response = completion(model=llm_callable, messages=messages)
+                    # Get the response and strip and lower it
+                    val_response = val_response.choices[0].message.content  # type: ignore
+                    val_response = val_response.strip().lower()
+                except Exception as e:
+                    raise RuntimeError(
+                        f"Error getting response from the LLM: {e}"
+                    ) from e
 
-            def openai_callable(prompt: str) -> str:
-                response = self.client.create_chat_completion(
-                    model=llm_callable,
-                    messages=[
-                        {"role": "user", "content": prompt},
-                    ],
-                    max_tokens=self._max_tokens,
-                )
-                return response.output
+                if val_response not in ["yes", "no"]:
+                    raise ValueError(
+                        "Received an invalid evaluation response from the LLM."
+                    )
+                return val_response
 
-            self._llm_callable = openai_callable
+            self._llm_callable = litellm_callable
         elif isinstance(llm_callable, Callable):
             self._llm_callable = llm_callable
-        else:
-            raise ValueError(
-                "llm_callable must be either a string or a callable that takes a string"
-                " and returns a string."
-            )
 
-    def get_query_function(self, metadata: Dict[str, Any]) -> Callable:
-        # Exact same as ProvenanceV0
-
-        query_fn = metadata.get("query_function", None)
-        sources = metadata.get("sources", None)
-
-        # Check that query_fn or sources are provided
-        if query_fn is not None:
-            if sources is not None:
-                warnings.warn(
-                    "Both `query_function` and `sources` are provided in metadata. "
-                    "`query_function` will be used."
-                )
-            return query_fn
-
-        if sources is None:
-            raise ValueError(
-                "You must provide either `query_function` or `sources` in metadata."
-            )
-
-        # Check chunking strategy
-        chunk_strategy = metadata.get("chunk_strategy", "sentence")
-        if chunk_strategy not in ["sentence", "word", "char", "token"]:
-            raise ValueError(
-                "`chunk_strategy` must be one of 'sentence', 'word', 'char', "
-                "or 'token'."
-            )
-        chunk_size = metadata.get("chunk_size", 5)
-        chunk_overlap = metadata.get("chunk_overlap", 2)
-
-        # Check distance metric
-        distance_metric = metadata.get("distance_metric", "cosine")
-        if distance_metric not in ["cosine", "euclidean"]:
-            raise ValueError(
-                "`distance_metric` must be one of 'cosine' or 'euclidean'."
-            )
-
-        # Check embed model
-        embed_function = metadata.get("embed_function", None)
-        if embed_function is None:
-            raise ValueError(
-                "You must provide `embed_function` in metadata in order to "
-                "use the default query function."
-            )
-        return partial(
-            self.query_vector_collection,
-            sources=metadata["sources"],
-            chunk_strategy=chunk_strategy,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            distance_metric=distance_metric,
-            embed_function=embed_function,
-        )
-
-    @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
+    @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(3))
     def call_llm(self, prompt: str) -> str:
-        """Call the LLM with the given prompt.
-
-        Expects a function that takes a string and returns a string.
+        """Call `self._llm_callable` with the given prompt.
 
         Args:
             prompt (str): The prompt to send to the LLM.
@@ -261,7 +129,7 @@ class ProvenanceV1(Validator):
             query_function (Callable): The query function.
 
         Returns:
-            self_eval: The self-evaluation boolean
+            A boolean represneting if the response is supported by the context.
         """
         # Get the relevant chunks using the query function
         relevant_chunks = query_function(text=text, k=self._top_k)
@@ -269,27 +137,21 @@ class ProvenanceV1(Validator):
         # Create the prompt to ask the LLM
         prompt = PROVENANCE_V1_PROMPT.format(text, "\n".join(relevant_chunks))
 
-        # Get self-evaluation
-        self_eval = self.call_llm(prompt)
-        self_eval = True if self_eval == "Yes" else False
-        return self_eval
+        # Get evaluation response
+        eval_response = self.call_llm(prompt)
+        return eval_response == "yes"
 
     def validate_each_sentence(
         self, value: Any, query_function: Callable, metadata: Dict[str, Any]
     ) -> ValidationResult:
-        if nltk is None:
-            raise ImportError(
-                "`nltk` library is required for `provenance-v0` validator. "
-                "Please install it with `poetry add nltk`."
-            )
+        """Validate each sentence in the response."""
         # Split the value into sentences using nltk sentence tokenizer.
         sentences = nltk.sent_tokenize(value)
 
-        unsupported_sentences = []
-        supported_sentences = []
+        unsupported_sentences, supported_sentences = [], []
         for sentence in sentences:
-            self_eval = self.evaluate_with_llm(sentence, query_function)
-            if not self_eval:
+            supported = self.evaluate_with_llm(sentence, query_function)
+            if not supported:
                 unsupported_sentences.append(sentence)
             else:
                 supported_sentences.append(sentence)
@@ -299,8 +161,8 @@ class ProvenanceV1(Validator):
             return FailResult(
                 metadata=metadata,
                 error_message=(
-                    f"None of the following sentences in your response are supported "
-                    "by provided context:"
+                    f"None of the following sentences in your response "
+                    "are supported by the provided context:"
                     f"\n{unsupported_sentences}"
                 ),
                 fix_value="\n".join(supported_sentences),
@@ -310,47 +172,76 @@ class ProvenanceV1(Validator):
     def validate_full_text(
         self, value: Any, query_function: Callable, metadata: Dict[str, Any]
     ) -> ValidationResult:
+        """Validate the entire LLM text."""
         # Self-evaluate LLM with entire text
-        self_eval = self.evaluate_with_llm(value, query_function)
-        if not self_eval:
-            # if false
+        supported = self.evaluate_with_llm(value, query_function)
+        if not supported:
             return FailResult(
                 metadata=metadata,
                 error_message=(
-                    "The following text in your response is not supported by the "
+                    "The following text in your response is not "
                     "supported by the provided context:\n" + value
                 ),
             )
         return PassResult(metadata=metadata)
 
     def validate(self, value: Any, metadata: Dict[str, Any]) -> ValidationResult:
-        kwargs = {}
-        context_copy = contextvars.copy_context()
-        for key, context_var in context_copy.items():
-            if key.name == "kwargs" and isinstance(kwargs, dict):
-                kwargs = context_var
-                break
-
-        api_key = kwargs.get("api_key")
-        api_base = kwargs.get("api_base")
-
-        # Set the OpenAI API key
-        if os.getenv("OPENAI_API_KEY"):  # Check if set in environment
-            self.client.api_key = os.getenv("OPENAI_API_KEY")
-        elif api_key:  # Check if set when calling guard() or parse()
-            self.client.api_key = api_key
-
-        # Set the OpenAI API base if specified
-        if api_base:
-            self.client.api_base = api_base
+        """Validation method for the `ProvenanceLLM` validator."""
 
         query_function = self.get_query_function(metadata)
         if self._validation_method == "sentence":
             return self.validate_each_sentence(value, query_function, metadata)
-        elif self._validation_method == "full":
+        if self._validation_method == "full":
             return self.validate_full_text(value, query_function, metadata)
-        else:
-            raise ValueError("validation_method must be 'sentence' or 'full'.")
+
+    def get_query_function(self, metadata: Dict[str, Any]) -> Callable:
+        """Get the query function from metadata.
+
+        If `query_function` is provided, it will be used. Otherwise, `sources` and
+        `embed_function` will be used to create a default query function.
+        """
+        query_fn = metadata.get("query_function", None)
+        sources = metadata.get("sources", None)
+
+        # Check that query_fn or sources are provided
+        if query_fn is not None:
+            if sources is not None:
+                warnings.warn(
+                    "Both `query_function` and `sources` are provided in metadata. "
+                    "`query_function` will be used."
+                )
+            return query_fn
+
+        if sources is None:
+            raise ValueError(
+                "You must provide either `query_function` or `sources` in metadata."
+            )
+
+        # Check chunking strategy, size and overlap
+        chunk_strategy = metadata.get("chunk_strategy", "sentence")
+        if chunk_strategy not in ["sentence", "word", "char", "token"]:
+            raise ValueError(
+                "`chunk_strategy` must be one of 'sentence', 'word', "
+                "'char', or 'token'."
+            )
+        chunk_size = metadata.get("chunk_size", 5)
+        chunk_overlap = metadata.get("chunk_overlap", 2)
+
+        # Check embed model
+        embed_function = metadata.get("embed_function", None)
+        if embed_function is None:
+            raise ValueError(
+                "You must provide `embed_function` in metadata in order to "
+                "use the default query function."
+            )
+        return partial(
+            self.query_vector_collection,
+            sources=metadata["sources"],
+            embed_function=embed_function,
+            chunk_strategy=chunk_strategy,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
 
     @staticmethod
     def query_vector_collection(
@@ -361,8 +252,8 @@ class ProvenanceV1(Validator):
         chunk_strategy: str = "sentence",
         chunk_size: int = 5,
         chunk_overlap: int = 2,
-        distance_metric: str = "cosine",
     ) -> List[Tuple[str, float]]:
+        """Query a collection of vectors using given text, return the top k chunks."""
         chunks = [
             get_chunks_from_text(source, chunk_strategy, chunk_size, chunk_overlap)
             for source in sources
@@ -373,24 +264,16 @@ class ProvenanceV1(Validator):
         source_embeddings = np.array(embed_function(chunks)).squeeze()
         query_embedding = embed_function(text).squeeze()
 
-        # Compute distances
-        if distance_metric == "cosine":
-            if not _HAS_NUMPY:
-                raise ValueError(
-                    "You must install numpy in order to use the cosine distance "
-                    "metric."
-                )
-
-            cos_sim = 1 - (
-                np.dot(source_embeddings, query_embedding)
-                / (
-                    np.linalg.norm(source_embeddings, axis=1)
-                    * np.linalg.norm(query_embedding)
-                )
+        # Compute distances using cosine similarity
+        # and return top k nearest chunks
+        cos_sim = 1 - (
+            np.dot(source_embeddings, query_embedding)
+            / (
+                np.linalg.norm(source_embeddings, axis=1)
+                * np.linalg.norm(query_embedding)
             )
-            top_indices = np.argsort(cos_sim)[:k]
-            top_chunks = [chunks[j] for j in top_indices]
-        else:
-            raise ValueError("distance_metric must be 'cosine'.")
+        )
+        top_indices = np.argsort(cos_sim)[:k]
+        top_chunks = [chunks[j] for j in top_indices]
 
         return top_chunks
