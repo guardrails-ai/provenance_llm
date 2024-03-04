@@ -2,6 +2,7 @@ import itertools
 import warnings
 from functools import partial
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from warnings import warn
 
 import nltk
 import numpy as np
@@ -97,11 +98,6 @@ class ProvenanceLLM(Validator):
                     raise RuntimeError(
                         f"Error getting response from the LLM: {e}"
                     ) from e
-
-                if val_response not in ["yes", "no"]:
-                    raise ValueError(
-                        "Received an invalid evaluation response from the LLM."
-                    )
                 return val_response
 
             self._llm_callable = litellm_callable
@@ -120,7 +116,7 @@ class ProvenanceLLM(Validator):
         """
         return self._llm_callable(prompt)
 
-    def evaluate_with_llm(self, text: str, query_function: Callable) -> bool:
+    def evaluate_with_llm(self, text: str, query_function: Callable) -> str:
         """Validate that the LLM-generated text is supported by the provided
         contexts.
 
@@ -129,7 +125,7 @@ class ProvenanceLLM(Validator):
             query_function (Callable): The query function.
 
         Returns:
-            A boolean represneting if the response is supported by the context.
+            eval_response (str): The evaluation response from the LLM.
         """
         # Get the relevant chunks using the query function
         relevant_chunks = query_function(text=text, k=self._top_k)
@@ -139,22 +135,35 @@ class ProvenanceLLM(Validator):
 
         # Get evaluation response
         eval_response = self.call_llm(prompt)
-        return eval_response == "yes"
+        return eval_response
 
     def validate_each_sentence(
         self, value: Any, query_function: Callable, metadata: Dict[str, Any]
     ) -> ValidationResult:
         """Validate each sentence in the response."""
+        pass_on_invalid = metadata.get("pass_on_invalid", False)  # Default to False
+
         # Split the value into sentences using nltk sentence tokenizer.
         sentences = nltk.sent_tokenize(value)
 
         unsupported_sentences, supported_sentences = [], []
         for sentence in sentences:
-            supported = self.evaluate_with_llm(sentence, query_function)
-            if not supported:
+            eval_response = self.evaluate_with_llm(sentence, query_function)
+            if eval_response == "yes":
+                supported_sentences.append(sentence)
+            elif eval_response == "no":
                 unsupported_sentences.append(sentence)
             else:
-                supported_sentences.append(sentence)
+                if pass_on_invalid:
+                    warn(
+                        "The LLM returned an invalid response. Considering the sentence as supported..."
+                    )
+                    supported_sentences.append(sentence)
+                else:
+                    warn(
+                        "The LLM returned an invalid response. Considering the sentence as unsupported..."
+                    )
+                    unsupported_sentences.append(sentence)
 
         if unsupported_sentences:
             unsupported_sentences = "- " + "\n- ".join(unsupported_sentences)
@@ -173,9 +182,13 @@ class ProvenanceLLM(Validator):
         self, value: Any, query_function: Callable, metadata: Dict[str, Any]
     ) -> ValidationResult:
         """Validate the entire LLM text."""
+        pass_on_invalid = metadata.get("pass_on_invalid", False)  # Default to False
+
         # Self-evaluate LLM with entire text
-        supported = self.evaluate_with_llm(value, query_function)
-        if not supported:
+        eval_response = self.evaluate_with_llm(value, query_function)
+        if eval_response == "yes":
+            return PassResult(metadata=metadata)
+        if eval_response == "no":
             return FailResult(
                 metadata=metadata,
                 error_message=(
@@ -183,7 +196,15 @@ class ProvenanceLLM(Validator):
                     "supported by the provided context:\n" + value
                 ),
             )
-        return PassResult(metadata=metadata)
+        if pass_on_invalid:
+            warn("The LLM returned an invalid response. Passing the validation...")
+            return PassResult(metadata=metadata)
+        return FailResult(
+            metadata=metadata,
+            error_message=(
+                "The LLM returned an invalid response. Failing the validation..."
+            ),
+        )
 
     def validate(self, value: Any, metadata: Dict[str, Any]) -> ValidationResult:
         """Validation method for the `ProvenanceLLM` validator."""
