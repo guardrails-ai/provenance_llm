@@ -45,7 +45,11 @@ class ValidatorTestObject(BaseModel):
                 "text": "The sun rises in the east."
             }
             """,
-            {"sources": SOURCES, "embed_function": embed_function},
+            {
+                "sources": SOURCES,
+                "embed_function": embed_function,
+                "pass_on_invalid": True,
+            },
         ),
         (
             """
@@ -53,7 +57,11 @@ class ValidatorTestObject(BaseModel):
                 "text": "The sun is a star."
             }
             """,
-            {"sources": SOURCES, "embed_function": embed_function},
+            {
+                "sources": SOURCES,
+                "embed_function": embed_function,
+                "pass_on_invalid": True,
+            },
         ),
         (
             """
@@ -61,7 +69,11 @@ class ValidatorTestObject(BaseModel):
                 "text": "The sun sets in the west."
             }
             """,
-            {"sources": SOURCES, "embed_function": embed_function},
+            {
+                "sources": SOURCES,
+                "embed_function": embed_function,
+                "pass_on_invalid": True,
+            },
         ),
     ],
 )
