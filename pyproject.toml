@@ -20,7 +20,8 @@ dependencies = [
 dev = [
     "pyright",
     "pytest",
-    "ruff"
+    "ruff",
+    "sentence-transformers"
 ]
 
 [tool.pytest.ini_options]
