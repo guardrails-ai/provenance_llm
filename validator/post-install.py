@@ -1,4 +1,5 @@
 import nltk
+from sentence_transformers import SentenceTransformer
 
 # Download NLTK data if not already present
 try:
@@ -6,3 +7,6 @@ try:
 except LookupError:
     nltk.download("punkt")
 print("NLTK stuff loaded successfully.")
+
+# Load model for default embedding function
+SentenceTransformer("paraphrase-MiniLM-L6-v2")

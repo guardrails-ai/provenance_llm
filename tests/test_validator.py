@@ -71,7 +71,6 @@ class ValidatorTestObject(BaseModel):
             """,
             {
                 "sources": SOURCES,
-                "embed_function": embed_function,
                 "pass_on_invalid": True,
             },
         ),

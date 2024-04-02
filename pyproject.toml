@@ -13,7 +13,8 @@ dependencies = [
     "litellm",
     "nltk",
     "numpy",
-    "tenacity"
+    "tenacity",
+    "sentence-transformers"
 ]
 
 [project.optional-dependencies]
