@@ -1,3 +1,4 @@
+import os
 import itertools
 import warnings
 from functools import partial
@@ -15,7 +16,8 @@ from guardrails.validator_base import (
     Validator,
     register_validator,
 )
-from litellm import completion
+from guardrails.stores.context import get_call_kwarg
+from litellm import completion, get_llm_provider
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 
@@ -89,8 +91,15 @@ class ProvenanceLLM(Validator):
             def litellm_callable(prompt: str) -> str:
                 # Get the LLM response
                 messages = [{"content": prompt, "role": "user"}]
+                
+                kwargs = {}
+                _model, provider, *_rest = get_llm_provider(llm_callable)
+                if provider == "openai":
+                    kwargs["api_key"] = get_call_kwarg("api_key") or os.environ.get("OPENAI_API_KEY")
+                
                 try:
-                    val_response = completion(model=llm_callable, messages=messages)
+                    # We should allow users to pass kwargs to this somehow
+                    val_response = completion(model=llm_callable, messages=messages, **kwargs)
                     # Get the response and strip and lower it
                     val_response = val_response.choices[0].message.content  # type: ignore
                     val_response = val_response.strip().lower()
@@ -212,8 +221,7 @@ class ProvenanceLLM(Validator):
         query_function = self.get_query_function(metadata)
         if self._validation_method == "sentence":
             return self.validate_each_sentence(value, query_function, metadata)
-        if self._validation_method == "full":
-            return self.validate_full_text(value, query_function, metadata)
+        return self.validate_full_text(value, query_function, metadata)
 
     def get_query_function(self, metadata: Dict[str, Any]) -> Callable:
         """Get the query function from metadata.
