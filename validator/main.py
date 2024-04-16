@@ -1,5 +1,5 @@
-import os
 import itertools
+import os
 import warnings
 from functools import partial
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -7,6 +7,7 @@ from warnings import warn
 
 import nltk
 import numpy as np
+from guardrails.stores.context import get_call_kwarg
 from guardrails.utils.docs_utils import get_chunks_from_text
 from guardrails.utils.validator_utils import PROVENANCE_V1_PROMPT
 from guardrails.validator_base import (
@@ -14,9 +15,8 @@ from guardrails.validator_base import (
     PassResult,
     ValidationResult,
     Validator,
-    register_validator,
+    register_validator
 )
-from guardrails.stores.context import get_call_kwarg
 from litellm import completion, get_llm_provider
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
@@ -91,15 +91,19 @@ class ProvenanceLLM(Validator):
             def litellm_callable(prompt: str) -> str:
                 # Get the LLM response
                 messages = [{"content": prompt, "role": "user"}]
-                
+
                 kwargs = {}
                 _model, provider, *_rest = get_llm_provider(llm_callable)
                 if provider == "openai":
-                    kwargs["api_key"] = get_call_kwarg("api_key") or os.environ.get("OPENAI_API_KEY")
-                
+                    kwargs["api_key"] = get_call_kwarg("api_key") or os.environ.get(
+                        "OPENAI_API_KEY"
+                    )
+
                 try:
                     # We should allow users to pass kwargs to this somehow
-                    val_response = completion(model=llm_callable, messages=messages, **kwargs)
+                    val_response = completion(
+                        model=llm_callable, messages=messages, **kwargs
+                    )
                     # Get the response and strip and lower it
                     val_response = val_response.choices[0].message.content  # type: ignore
                     val_response = val_response.strip().lower()
@@ -147,13 +151,18 @@ class ProvenanceLLM(Validator):
         return eval_response
 
     def validate_each_sentence(
-        self, value: Any, query_function: Callable, metadata: Dict[str, Any]
+        self,
+        value: Any,
+        query_function: Callable,
+        metadata: Dict[str, Any],
+        sentences: Optional[List[str]] = None,
     ) -> ValidationResult:
         """Validate each sentence in the response."""
         pass_on_invalid = metadata.get("pass_on_invalid", False)  # Default to False
 
         # Split the value into sentences using nltk sentence tokenizer.
-        sentences = nltk.sent_tokenize(value)
+        if not sentences:
+            sentences = nltk.sent_tokenize(value)
 
         unsupported_sentences, supported_sentences = [], []
         for sentence in sentences:
@@ -215,13 +224,28 @@ class ProvenanceLLM(Validator):
             ),
         )
 
+    def validate_most_recent_sentence(
+        self, value: Any, query_function, metadata: Dict[str, Any]
+    ) -> ValidationResult:
+        # Split the value into sentences using nltk sentence tokenizer.
+        sentences = nltk.sent_tokenize(value)
+        if sentences:
+            if len(sentences) > 1 or sentences[0].endswith((".", "?", "!")):
+                return self.validate_each_sentence(
+                    sentences[-1], query_function, metadata, sentences
+                )
+
     def validate(self, value: Any, metadata: Dict[str, Any]) -> ValidationResult:
         """Validation method for the `ProvenanceLLM` validator."""
-
         query_function = self.get_query_function(metadata)
-        if self._validation_method == "sentence":
-            return self.validate_each_sentence(value, query_function, metadata)
-        return self.validate_full_text(value, query_function, metadata)
+
+        # If streaming
+        return self.validate_most_recent_sentence(value, query_function, metadata)
+
+        # if not streaming
+        # if self._validation_method == "sentence":
+        #     return self.validate_each_sentence(value, query_function, metadata)
+        # return self.validate_full_text(value, query_function, metadata)
 
     def get_query_function(self, metadata: Dict[str, Any]) -> Callable:
         """Get the query function from metadata.
