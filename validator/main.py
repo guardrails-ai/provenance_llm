@@ -1,4 +1,5 @@
 import itertools
+import json
 import os
 import warnings
 from functools import partial
@@ -189,7 +190,7 @@ class ProvenanceLLM(Validator):
                 metadata=metadata,
                 violation="ProvenanceLLM",
                 fix_value=None,
-                error_message=str(
+                error_message=json.dumps(
                     {
                         "match_string": unsupported_sentences[-1],
                         "violation": "ProvenanceLLM",
