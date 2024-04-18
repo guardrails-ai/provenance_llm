@@ -20,6 +20,7 @@ from guardrails.validator_base import (
 )
 from litellm import completion, get_llm_provider
 from tenacity import retry, stop_after_attempt, wait_random_exponential
+from sentence_transformers import SentenceTransformer
 
 
 @register_validator(name="guardrails/provenance_llm", data_type="string")
@@ -291,10 +292,12 @@ class ProvenanceLLM(Validator):
         # Check embed model
         embed_function = metadata.get("embed_function", None)
         if embed_function is None:
-            raise ValueError(
-                "You must provide `embed_function` in metadata in order to "
-                "use the default query function."
-            )
+            # Load model for embedding function
+            MODEL = SentenceTransformer("paraphrase-MiniLM-L6-v2")
+            # Create embed function
+            def st_embed_function(sources: list[str]):
+                return MODEL.encode(sources)
+            embed_function = st_embed_function
         return partial(
             self.query_vector_collection,
             sources=metadata["sources"],
