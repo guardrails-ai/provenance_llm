@@ -10,16 +10,12 @@ import numpy as np
 from guardrails.stores.context import get_call_kwarg
 from guardrails.utils.docs_utils import get_chunks_from_text
 from guardrails.utils.validator_utils import PROVENANCE_V1_PROMPT
-from guardrails.validator_base import (
-    FailResult,
-    PassResult,
-    ValidationResult,
-    Validator,
-    register_validator
-)
+from guardrails.validator_base import (FailResult, PassResult,
+                                       ValidationResult, Validator,
+                                       register_validator)
 from litellm import completion, get_llm_provider
 from tenacity import retry, stop_after_attempt, wait_random_exponential
-
+    register_validator,
 
 @register_validator(name="guardrails/provenance_llm", data_type="string")
 class ProvenanceLLM(Validator):
@@ -187,11 +183,11 @@ class ProvenanceLLM(Validator):
             unsupported_sentences = "- " + "\n- ".join(unsupported_sentences)
             return FailResult(
                 metadata=metadata,
-                error_message=(
-                    f"None of the following sentences in your response "
-                    "are supported by the provided context:"
-                    f"\n{unsupported_sentences}"
-                ),
+                match_string=value,
+                violation="ProvenanceLLM",
+                error_msg= f"None of the following sentences in your response"
+                "are supported by the provided context:"
+                f"\n{unsupported_sentences}",
                 fix_value="\n".join(supported_sentences),
             )
         return PassResult(metadata=metadata)
