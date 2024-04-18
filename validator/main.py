@@ -190,7 +190,7 @@ class ProvenanceLLM(Validator):
                 violation="ProvenanceLLM",
                 fix_value=None,
                 error_message=str(
-                    error_msg={
+                    {
                         "match_string": unsupported_sentences[-1],
                         "violation": "ProvenanceLLM",
                         "error_msg": f"The following sentence is not supported: {unsupported_sentences[-1]}",
