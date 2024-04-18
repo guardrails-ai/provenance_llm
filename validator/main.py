@@ -10,12 +10,16 @@ import numpy as np
 from guardrails.stores.context import get_call_kwarg
 from guardrails.utils.docs_utils import get_chunks_from_text
 from guardrails.utils.validator_utils import PROVENANCE_V1_PROMPT
-from guardrails.validator_base import (FailResult, PassResult,
-                                       ValidationResult, Validator,
-                                       register_validator)
+from guardrails.validator_base import (
+    FailResult,
+    PassResult,
+    ValidationResult,
+    Validator,
+    register_validator,
+)
 from litellm import completion, get_llm_provider
 from tenacity import retry, stop_after_attempt, wait_random_exponential
-    register_validator,
+
 
 @register_validator(name="guardrails/provenance_llm", data_type="string")
 class ProvenanceLLM(Validator):
@@ -155,12 +159,12 @@ class ProvenanceLLM(Validator):
     ) -> ValidationResult:
         """Validate each sentence in the response."""
         pass_on_invalid = metadata.get("pass_on_invalid", False)  # Default to False
-
         # Split the value into sentences using nltk sentence tokenizer.
         if not sentences:
             sentences = nltk.sent_tokenize(value)
 
         unsupported_sentences, supported_sentences = [], []
+
         for sentence in sentences:
             eval_response = self.evaluate_with_llm(sentence, query_function)
             if eval_response == "yes":
@@ -183,13 +187,18 @@ class ProvenanceLLM(Validator):
             unsupported_sentences = "- " + "\n- ".join(unsupported_sentences)
             return FailResult(
                 metadata=metadata,
-                match_string=value,
                 violation="ProvenanceLLM",
-                error_msg= f"None of the following sentences in your response"
-                "are supported by the provided context:"
-                f"\n{unsupported_sentences}",
-                fix_value="\n".join(supported_sentences),
+                fix_value=None,
+                error_message=str(
+                    error_msg={
+                        "match_string": unsupported_sentences[-1],
+                        "violation": "ProvenanceLLM",
+                        "error_msg": f"The following sentence is not supported: {unsupported_sentences[-1]}",
+                        "fix_value": None,
+                    },
+                ),
             )
+
         return PassResult(metadata=metadata)
 
     def validate_full_text(
@@ -225,11 +234,13 @@ class ProvenanceLLM(Validator):
     ) -> ValidationResult:
         # Split the value into sentences using nltk sentence tokenizer.
         sentences = nltk.sent_tokenize(value)
+
         if sentences:
-            if len(sentences) > 1 or sentences[0].endswith((".", "?", "!")):
+            if sentences[-1].endswith((".", "?", "!")):
                 return self.validate_each_sentence(
-                    sentences[-1], query_function, metadata, sentences
+                    sentences[-1], query_function, metadata, [sentences[-1]]
                 )
+        return PassResult(metadata=metadata)
 
     def validate(self, value: Any, metadata: Dict[str, Any]) -> ValidationResult:
         """Validation method for the `ProvenanceLLM` validator."""
@@ -318,7 +329,7 @@ class ProvenanceLLM(Validator):
         cos_sim = 1 - (
             np.dot(source_embeddings, query_embedding)
             / (
-                np.linalg.norm(source_embeddings, axis=1)
+                np.linalg.norm(source_embeddings, axis=0)
                 * np.linalg.norm(query_embedding)
             )
         )
