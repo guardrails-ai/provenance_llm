@@ -110,7 +110,11 @@ class ProvenanceLLM(Validator):
                 try:
                     # We should allow users to pass kwargs to this somehow
                     val_response = completion(
-                        model=llm_callable, messages=messages, **kwargs
+                        model=llm_callable,
+                        messages=messages,
+                        temperature=0.0,
+                        seed=42,
+                        **kwargs
                     )
                     # Get the response and strip and lower it
                     val_response = val_response.choices[0].message.content  # type: ignore
