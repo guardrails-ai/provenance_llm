@@ -1,5 +1,6 @@
-import os
 import itertools
+import json
+import os
 import warnings
 from functools import partial
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -7,6 +8,8 @@ from warnings import warn
 
 import nltk
 import numpy as np
+import openai
+from guardrails.stores.context import get_call_kwarg
 from guardrails.utils.docs_utils import get_chunks_from_text
 from guardrails.utils.validator_utils import PROVENANCE_V1_PROMPT
 from guardrails.validator_base import (
@@ -16,10 +19,9 @@ from guardrails.validator_base import (
     Validator,
     register_validator,
 )
-from guardrails.stores.context import get_call_kwarg
 from litellm import completion, get_llm_provider
-from tenacity import retry, stop_after_attempt, wait_random_exponential
 from sentence_transformers import SentenceTransformer
+from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 
 @register_validator(name="guardrails/provenance_llm", data_type="string")
@@ -66,6 +68,11 @@ class ProvenanceLLM(Validator):
             top_k=top_k,
             **kwargs,
         )
+        from openai import OpenAI
+
+        openai.api_key = os.environ.get("OPENAI_API_KEY")
+
+        self.embedding_client = OpenAI()
 
         if validation_method not in ["sentence", "full"]:
             raise ValueError("validation_method must be 'sentence' or 'full'.")
@@ -92,15 +99,23 @@ class ProvenanceLLM(Validator):
             def litellm_callable(prompt: str) -> str:
                 # Get the LLM response
                 messages = [{"content": prompt, "role": "user"}]
-                
+
                 kwargs = {}
                 _model, provider, *_rest = get_llm_provider(llm_callable)
                 if provider == "openai":
-                    kwargs["api_key"] = get_call_kwarg("api_key") or os.environ.get("OPENAI_API_KEY")
-                
+                    kwargs["api_key"] = get_call_kwarg("api_key") or os.environ.get(
+                        "OPENAI_API_KEY"
+                    )
+
                 try:
                     # We should allow users to pass kwargs to this somehow
-                    val_response = completion(model=llm_callable, messages=messages, **kwargs)
+                    val_response = completion(
+                        model=llm_callable,
+                        messages=messages,
+                        temperature=0.0,
+                        seed=42,
+                        **kwargs
+                    )
                     # Get the response and strip and lower it
                     val_response = val_response.choices[0].message.content  # type: ignore
                     val_response = val_response.strip().lower()
@@ -148,16 +163,22 @@ class ProvenanceLLM(Validator):
         return eval_response
 
     def validate_each_sentence(
-        self, value: Any, query_function: Callable, metadata: Dict[str, Any]
+        self,
+        value: Any,
+        query_function: Callable,
+        metadata: Dict[str, Any],
+        sentences: Optional[List[str]] = None,
     ) -> ValidationResult:
         """Validate each sentence in the response."""
         pass_on_invalid = metadata.get("pass_on_invalid", False)  # Default to False
-
         # Split the value into sentences using nltk sentence tokenizer.
-        sentences = nltk.sent_tokenize(value)
-
+        if not sentences:
+            sentences = nltk.sent_tokenize(value)
         unsupported_sentences, supported_sentences = [], []
+
         for sentence in sentences:
+            # print("Checking sentence: ", sentence)
+
             eval_response = self.evaluate_with_llm(sentence, query_function)
             if eval_response == "yes":
                 supported_sentences.append(sentence)
@@ -174,18 +195,23 @@ class ProvenanceLLM(Validator):
                         "The LLM returned an invalid response. Considering the sentence as unsupported..."
                     )
                     unsupported_sentences.append(sentence)
-
+        # print("UNSUPPORTED SENTENCES:", unsupported_sentences)
         if unsupported_sentences:
-            unsupported_sentences = "- " + "\n- ".join(unsupported_sentences)
+            # unsupported_sentences = "- " + "\n- ".join(unsupported_sentences)
             return FailResult(
                 metadata=metadata,
-                error_message=(
-                    f"None of the following sentences in your response "
-                    "are supported by the provided context:"
-                    f"\n{unsupported_sentences}"
+                violation="ProvenanceLLM",
+                fix_value=None,
+                error_message=json.dumps(
+                    {
+                        "match_string": unsupported_sentences[-1],
+                        "violation": "ProvenanceLLM",
+                        "error_msg": f"The following sentence is not supported: {unsupported_sentences[-1]}",
+                        "fix_value": None,
+                    },
                 ),
-                fix_value="\n".join(supported_sentences),
             )
+
         return PassResult(metadata=metadata)
 
     def validate_full_text(
@@ -216,13 +242,30 @@ class ProvenanceLLM(Validator):
             ),
         )
 
+    def validate_most_recent_sentence(
+        self, value: Any, metadata: Dict[str, Any]
+    ) -> ValidationResult:
+        # Split the value into sentences using nltk sentence tokenizer.
+        sentences = nltk.sent_tokenize(value)
+
+        if sentences:
+            if sentences[-1].endswith((".", "?", "!")):
+                query_function = self.get_query_function(metadata)
+                return self.validate_each_sentence(
+                    sentences[-1], query_function, metadata, [sentences[-1]]
+                )
+        return PassResult(metadata=metadata)
+
     def validate(self, value: Any, metadata: Dict[str, Any]) -> ValidationResult:
         """Validation method for the `ProvenanceLLM` validator."""
 
-        query_function = self.get_query_function(metadata)
-        if self._validation_method == "sentence":
-            return self.validate_each_sentence(value, query_function, metadata)
-        return self.validate_full_text(value, query_function, metadata)
+        # If streaming
+        return self.validate_most_recent_sentence(value, metadata)
+
+        # if not streaming
+        # if self._validation_method == "sentence":
+        #     return self.validate_each_sentence(value, query_function, metadata)
+        # return self.validate_full_text(value, query_function, metadata)
 
     def get_query_function(self, metadata: Dict[str, Any]) -> Callable:
         """Get the query function from metadata.
@@ -230,49 +273,64 @@ class ProvenanceLLM(Validator):
         If `query_function` is provided, it will be used. Otherwise, `sources` and
         `embed_function` will be used to create a default query function.
         """
-        query_fn = metadata.get("query_function", None)
+        # query_fn = metadata.get("query_function", None)
         sources = metadata.get("sources", None)
 
-        # Check that query_fn or sources are provided
-        if query_fn is not None:
-            if sources is not None:
-                warnings.warn(
-                    "Both `query_function` and `sources` are provided in metadata. "
-                    "`query_function` will be used."
+        # # Check that query_fn or sources are provided
+        # if query_fn is not None:
+        #     if sources is not None:
+        #         warnings.warn(
+        #             "Both `query_function` and `sources` are provided in metadata. "
+        #             "`query_function` will be used."
+        #         )
+        #     return query_fn
+
+        # if sources is None:
+        #     raise ValueError(
+        #         "You must provide either `query_function` or `sources` in metadata."
+        #     )
+
+        # # Check chunking strategy, size and overlap
+        # chunk_strategy = metadata.get("chunk_strategy", "sentence")
+        # if chunk_strategy not in ["sentence", "word", "char", "token"]:
+        #     raise ValueError(
+        #         "`chunk_strategy` must be one of 'sentence', 'word', "
+        #         "'char', or 'token'."
+        #     )
+        # chunk_size = metadata.get("chunk_size", 5)
+        # chunk_overlap = metadata.get("chunk_overlap", 2)
+
+        # # Check embed model
+        # embed_function = metadata.get("embed_function", None)
+        # if embed_function is None:
+        #     # Load model for embedding function
+        #     MODEL = SentenceTransformer("paraphrase-MiniLM-L6-v2")
+
+        #     # Create embed function
+        #     def st_embed_function(sources: list[str]):
+        #         return MODEL.encode(sources)
+
+        #     embed_function = st_embed_function
+
+        def embed_function(text, model="text-embedding-3-small"):
+            text = text[-1]
+            text = text.replace("\n", " ")
+            result = np.array(
+                (
+                    self.embedding_client.embeddings.create(input=[text], model=model)
+                    .data[0]
+                    .embedding
                 )
-            return query_fn
-
-        if sources is None:
-            raise ValueError(
-                "You must provide either `query_function` or `sources` in metadata."
             )
+            return result
 
-        # Check chunking strategy, size and overlap
-        chunk_strategy = metadata.get("chunk_strategy", "sentence")
-        if chunk_strategy not in ["sentence", "word", "char", "token"]:
-            raise ValueError(
-                "`chunk_strategy` must be one of 'sentence', 'word', "
-                "'char', or 'token'."
-            )
-        chunk_size = metadata.get("chunk_size", 5)
-        chunk_overlap = metadata.get("chunk_overlap", 2)
-
-        # Check embed model
-        embed_function = metadata.get("embed_function", None)
-        if embed_function is None:
-            # Load model for embedding function
-            MODEL = SentenceTransformer("paraphrase-MiniLM-L6-v2")
-            # Create embed function
-            def st_embed_function(sources: list[str]):
-                return MODEL.encode(sources)
-            embed_function = st_embed_function
         return partial(
             self.query_vector_collection,
             sources=metadata["sources"],
             embed_function=embed_function,
-            chunk_strategy=chunk_strategy,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
+            chunk_strategy="sentence",
+            chunk_size=5,
+            chunk_overlap=2,
         )
 
     @staticmethod
@@ -301,7 +359,7 @@ class ProvenanceLLM(Validator):
         cos_sim = 1 - (
             np.dot(source_embeddings, query_embedding)
             / (
-                np.linalg.norm(source_embeddings, axis=1)
+                np.linalg.norm(source_embeddings, axis=0)
                 * np.linalg.norm(query_embedding)
             )
         )
