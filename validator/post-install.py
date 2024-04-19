@@ -10,4 +10,4 @@ print("NLTK stuff loaded successfully.")
 
 # Load model for default embedding function
 model = SentenceTransformer("paraphrase-MiniLM-L6-v2")
-model.save()
+model.save('models')
