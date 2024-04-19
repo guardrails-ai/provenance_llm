@@ -11,20 +11,16 @@ import numpy as np
 from guardrails.stores.context import get_call_kwarg
 from guardrails.utils.docs_utils import get_chunks_from_text
 from guardrails.utils.validator_utils import PROVENANCE_V1_PROMPT
-from guardrails.validator_base import (
-    FailResult,
-    PassResult,
-    ValidationResult,
-    Validator,
-    register_validator,
-)
+from guardrails.validator_base import (FailResult, PassResult,
+                                       ValidationResult, Validator,
+                                       register_validator)
 from litellm import completion, get_llm_provider
-from tenacity import retry, stop_after_attempt, wait_random_exponential
 from sentence_transformers import SentenceTransformer
+from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 
-@register_validator(name="guardrails/provenance_llm", data_type="string")
-class ProvenanceLLM(Validator):
+from sentence_transformers import SentenceTransformer
+from tenacity import retry, stop_after_attempt, wait_random_exponential
     """Validates that the LLM-generated text is supported by the provided
     context.
 
@@ -232,13 +228,14 @@ class ProvenanceLLM(Validator):
         )
 
     def validate_most_recent_sentence(
-        self, value: Any, query_function, metadata: Dict[str, Any]
+        self, value: Any, metadata: Dict[str, Any]
     ) -> ValidationResult:
         # Split the value into sentences using nltk sentence tokenizer.
         sentences = nltk.sent_tokenize(value)
 
         if sentences:
             if sentences[-1].endswith((".", "?", "!")):
+                query_function = self.get_query_function(metadata)
                 return self.validate_each_sentence(
                     sentences[-1], query_function, metadata, [sentences[-1]]
                 )
@@ -246,7 +243,6 @@ class ProvenanceLLM(Validator):
 
     def validate(self, value: Any, metadata: Dict[str, Any]) -> ValidationResult:
         """Validation method for the `ProvenanceLLM` validator."""
-        query_function = self.get_query_function(metadata)
 
         # If streaming
         return self.validate_most_recent_sentence(value, query_function, metadata)
