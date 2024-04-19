@@ -304,10 +304,12 @@ class ProvenanceLLM(Validator):
         embed_function = metadata.get("embed_function", None)
         if embed_function is None:
             # Load model for embedding function
+            print("Loading embedding model from ./models/sentence-transformers/paraphrase-MiniLM-L6-v2...")
             MODEL = SentenceTransformer("./models/sentence-transformers/paraphrase-MiniLM-L6-v2")
 
             # Create embed function
             def st_embed_function(sources: list[str]):
+                print("Running st_embed_function...")
                 return MODEL.encode(sources)
 
             embed_function = st_embed_function
