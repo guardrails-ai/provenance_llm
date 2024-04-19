@@ -24,6 +24,22 @@ from sentence_transformers import SentenceTransformer
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 
+class DefaultEncodingModel:
+    _instance = None
+    _model = None
+    def __new__(cls):
+        if cls._model is None:
+            # Load model for embedding function
+            print("Loading embedding model from ./models/sentence-transformers/paraphrase-MiniLM-L6-v2...")
+            cls._model =  SentenceTransformer("./models/sentence-transformers/paraphrase-MiniLM-L6-v2")
+        if cls._instance is None:
+            cls._instance = super(DefaultEncodingModel, cls).__new__(cls)
+        return cls._instance
+    
+    def encode (self, sources: List[str]):
+        return self._model.encode(sources)
+
+
 @register_validator(name="guardrails/provenance_llm", data_type="string")
 class ProvenanceLLM(Validator):
     """Validates that the LLM-generated text is supported by the provided
@@ -243,14 +259,13 @@ class ProvenanceLLM(Validator):
         )
 
     def validate_most_recent_sentence(
-        self, value: Any, metadata: Dict[str, Any]
+        self, value: Any, query_function: Callable, metadata: Dict[str, Any]
     ) -> ValidationResult:
         # Split the value into sentences using nltk sentence tokenizer.
         sentences = nltk.sent_tokenize(value)
 
         if sentences:
             if sentences[-1].endswith((".", "?", "!")):
-                query_function = self.get_query_function(metadata)
                 return self.validate_each_sentence(
                     sentences[-1], query_function, metadata, [sentences[-1]]
                 )
@@ -259,8 +274,10 @@ class ProvenanceLLM(Validator):
     def validate(self, value: Any, metadata: Dict[str, Any]) -> ValidationResult:
         """Validation method for the `ProvenanceLLM` validator."""
 
+        query_function = self.get_query_function(metadata)
+        
         # If streaming
-        return self.validate_most_recent_sentence(value, metadata)
+        return self.validate_most_recent_sentence(value, query_function, metadata)
 
         # if not streaming
         # if self._validation_method == "sentence":
@@ -303,14 +320,10 @@ class ProvenanceLLM(Validator):
         # Check embed model
         embed_function = metadata.get("embed_function", None)
         if embed_function is None:
-            # Load model for embedding function
-            print("Loading embedding model from ./models/sentence-transformers/paraphrase-MiniLM-L6-v2...")
-            MODEL = SentenceTransformer("./models/sentence-transformers/paraphrase-MiniLM-L6-v2")
-
             # Create embed function
             def st_embed_function(sources: list[str]):
                 print("Running st_embed_function...")
-                return MODEL.encode(sources)
+                return DefaultEncodingModel().encode(sources)
 
             embed_function = st_embed_function
 
