@@ -11,16 +11,20 @@ import numpy as np
 from guardrails.stores.context import get_call_kwarg
 from guardrails.utils.docs_utils import get_chunks_from_text
 from guardrails.utils.validator_utils import PROVENANCE_V1_PROMPT
-from guardrails.validator_base import (FailResult, PassResult,
-                                       ValidationResult, Validator,
-                                       register_validator)
+from guardrails.validator_base import (
+    FailResult,
+    PassResult,
+    ValidationResult,
+    Validator,
+    register_validator,
+)
 from litellm import completion, get_llm_provider
 from sentence_transformers import SentenceTransformer
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 
-from sentence_transformers import SentenceTransformer
-from tenacity import retry, stop_after_attempt, wait_random_exponential
+@register_validator(name="guardrails/provenance_llm", data_type="string")
+class ProvenanceLLM(Validator):
     """Validates that the LLM-generated text is supported by the provided
     context.
 
@@ -245,7 +249,7 @@ from tenacity import retry, stop_after_attempt, wait_random_exponential
         """Validation method for the `ProvenanceLLM` validator."""
 
         # If streaming
-        return self.validate_most_recent_sentence(value, query_function, metadata)
+        return self.validate_most_recent_sentence(value, metadata)
 
         # if not streaming
         # if self._validation_method == "sentence":
@@ -290,9 +294,11 @@ from tenacity import retry, stop_after_attempt, wait_random_exponential
         if embed_function is None:
             # Load model for embedding function
             MODEL = SentenceTransformer("paraphrase-MiniLM-L6-v2")
+
             # Create embed function
             def st_embed_function(sources: list[str]):
                 return MODEL.encode(sources)
+
             embed_function = st_embed_function
         return partial(
             self.query_vector_collection,
