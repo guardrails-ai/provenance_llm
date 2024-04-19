@@ -273,64 +273,64 @@ class ProvenanceLLM(Validator):
         If `query_function` is provided, it will be used. Otherwise, `sources` and
         `embed_function` will be used to create a default query function.
         """
-        # query_fn = metadata.get("query_function", None)
+        query_fn = metadata.get("query_function", None)
         sources = metadata.get("sources", None)
 
-        # # Check that query_fn or sources are provided
-        # if query_fn is not None:
-        #     if sources is not None:
-        #         warnings.warn(
-        #             "Both `query_function` and `sources` are provided in metadata. "
-        #             "`query_function` will be used."
-        #         )
-        #     return query_fn
-
-        # if sources is None:
-        #     raise ValueError(
-        #         "You must provide either `query_function` or `sources` in metadata."
-        #     )
-
-        # # Check chunking strategy, size and overlap
-        # chunk_strategy = metadata.get("chunk_strategy", "sentence")
-        # if chunk_strategy not in ["sentence", "word", "char", "token"]:
-        #     raise ValueError(
-        #         "`chunk_strategy` must be one of 'sentence', 'word', "
-        #         "'char', or 'token'."
-        #     )
-        # chunk_size = metadata.get("chunk_size", 5)
-        # chunk_overlap = metadata.get("chunk_overlap", 2)
-
-        # # Check embed model
-        # embed_function = metadata.get("embed_function", None)
-        # if embed_function is None:
-        #     # Load model for embedding function
-        #     MODEL = SentenceTransformer("paraphrase-MiniLM-L6-v2")
-
-        #     # Create embed function
-        #     def st_embed_function(sources: list[str]):
-        #         return MODEL.encode(sources)
-
-        #     embed_function = st_embed_function
-
-        def embed_function(text, model="text-embedding-3-small"):
-            text = text[-1]
-            text = text.replace("\n", " ")
-            result = np.array(
-                (
-                    self.embedding_client.embeddings.create(input=[text], model=model)
-                    .data[0]
-                    .embedding
+        # Check that query_fn or sources are provided
+        if query_fn is not None:
+            if sources is not None:
+                warnings.warn(
+                    "Both `query_function` and `sources` are provided in metadata. "
+                    "`query_function` will be used."
                 )
+            return query_fn
+
+        if sources is None:
+            raise ValueError(
+                "You must provide either `query_function` or `sources` in metadata."
             )
-            return result
+
+        # Check chunking strategy, size and overlap
+        chunk_strategy = metadata.get("chunk_strategy", "sentence")
+        if chunk_strategy not in ["sentence", "word", "char", "token"]:
+            raise ValueError(
+                "`chunk_strategy` must be one of 'sentence', 'word', "
+                "'char', or 'token'."
+            )
+        chunk_size = metadata.get("chunk_size", 5)
+        chunk_overlap = metadata.get("chunk_overlap", 2)
+
+        # Check embed model
+        embed_function = metadata.get("embed_function", None)
+        if embed_function is None:
+            # Load model for embedding function
+            MODEL = SentenceTransformer("paraphrase-MiniLM-L6-v2")
+
+            # Create embed function
+            def st_embed_function(sources: list[str]):
+                return MODEL.encode(sources)
+
+            embed_function = st_embed_function
+
+        # def embed_function(text, model="text-embedding-3-small"):
+        #     text = text[-1]
+        #     text = text.replace("\n", " ")
+        #     result = np.array(
+        #         (
+        #             self.embedding_client.embeddings.create(input=[text], model=model)
+        #             .data[0]
+        #             .embedding
+        #         )
+        #     )
+        #     return result
 
         return partial(
             self.query_vector_collection,
             sources=metadata["sources"],
             embed_function=embed_function,
-            chunk_strategy="sentence",
-            chunk_size=5,
-            chunk_overlap=2,
+            chunk_strategy=chunk_strategy,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
         )
 
     @staticmethod
@@ -359,7 +359,7 @@ class ProvenanceLLM(Validator):
         cos_sim = 1 - (
             np.dot(source_embeddings, query_embedding)
             / (
-                np.linalg.norm(source_embeddings, axis=0)
+                np.linalg.norm(source_embeddings, axis=1)
                 * np.linalg.norm(query_embedding)
             )
         )
