@@ -170,10 +170,11 @@ class ProvenanceLLM(Validator):
         # Split the value into sentences using nltk sentence tokenizer.
         if not sentences:
             sentences = nltk.sent_tokenize(value)
-
         unsupported_sentences, supported_sentences = [], []
 
         for sentence in sentences:
+            # print("Checking sentence: ", sentence)
+
             eval_response = self.evaluate_with_llm(sentence, query_function)
             if eval_response == "yes":
                 supported_sentences.append(sentence)
@@ -190,9 +191,9 @@ class ProvenanceLLM(Validator):
                         "The LLM returned an invalid response. Considering the sentence as unsupported..."
                     )
                     unsupported_sentences.append(sentence)
-
+        # print("UNSUPPORTED SENTENCES:", unsupported_sentences)
         if unsupported_sentences:
-            unsupported_sentences = "- " + "\n- ".join(unsupported_sentences)
+            # unsupported_sentences = "- " + "\n- ".join(unsupported_sentences)
             return FailResult(
                 metadata=metadata,
                 violation="ProvenanceLLM",
