@@ -9,4 +9,5 @@ except LookupError:
 print("NLTK stuff loaded successfully.")
 
 # Load model for default embedding function
-SentenceTransformer("paraphrase-MiniLM-L6-v2")
+model = SentenceTransformer("paraphrase-MiniLM-L6-v2")
+model.save('./models/sentence-transformers/paraphrase-MiniLM-L6-v2')
