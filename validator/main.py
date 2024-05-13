@@ -1,5 +1,5 @@
-import os
 import itertools
+import os
 import warnings
 from functools import partial
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -7,6 +7,7 @@ from warnings import warn
 
 import nltk
 import numpy as np
+from guardrails.stores.context import get_call_kwarg
 from guardrails.utils.docs_utils import get_chunks_from_text
 from guardrails.utils.validator_utils import PROVENANCE_V1_PROMPT
 from guardrails.validator_base import (
@@ -16,15 +17,15 @@ from guardrails.validator_base import (
     Validator,
     register_validator,
 )
-from guardrails.stores.context import get_call_kwarg
 from litellm import completion, get_llm_provider
-from tenacity import retry, stop_after_attempt, wait_random_exponential
 from sentence_transformers import SentenceTransformer
+from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 
 @register_validator(name="guardrails/provenance_llm", data_type="string")
 class ProvenanceLLM(Validator):
     """Validates that the LLM-generated text is supported by the provided
+
     context.
 
     This validator uses an LLM callable to evaluate the generated text against the
@@ -92,15 +93,19 @@ class ProvenanceLLM(Validator):
             def litellm_callable(prompt: str) -> str:
                 # Get the LLM response
                 messages = [{"content": prompt, "role": "user"}]
-                
+
                 kwargs = {}
                 _model, provider, *_rest = get_llm_provider(llm_callable)
                 if provider == "openai":
-                    kwargs["api_key"] = get_call_kwarg("api_key") or os.environ.get("OPENAI_API_KEY")
-                
+                    kwargs["api_key"] = get_call_kwarg("api_key") or os.environ.get(
+                        "OPENAI_API_KEY"
+                    )
+
                 try:
                     # We should allow users to pass kwargs to this somehow
-                    val_response = completion(model=llm_callable, messages=messages, **kwargs)
+                    val_response = completion(
+                        model=llm_callable, messages=messages, **kwargs
+                    )
                     # Get the response and strip and lower it
                     val_response = val_response.choices[0].message.content  # type: ignore
                     val_response = val_response.strip().lower()
@@ -148,13 +153,18 @@ class ProvenanceLLM(Validator):
         return eval_response
 
     def validate_each_sentence(
-        self, value: Any, query_function: Callable, metadata: Dict[str, Any]
+        self,
+        value: Any,
+        query_function: Callable,
+        metadata: Dict[str, Any],
+        sentences: List[str] = None,
     ) -> ValidationResult:
         """Validate each sentence in the response."""
         pass_on_invalid = metadata.get("pass_on_invalid", False)  # Default to False
 
         # Split the value into sentences using nltk sentence tokenizer.
-        sentences = nltk.sent_tokenize(value)
+        if not sentences:
+            sentences = nltk.sent_tokenize(value)
 
         unsupported_sentences, supported_sentences = [], []
         for sentence in sentences:
@@ -216,6 +226,27 @@ class ProvenanceLLM(Validator):
             ),
         )
 
+    def validate_stream(self, chunk: str, metadata: Dict[str, Any]) -> ValidationResult:
+        """Validates an incoming stream of text. Only runs when a full sentence has been
+        collected, otherwise returns an immediate PassResult.
+
+        Args:
+            chunk (str): The most recent incoming chunk from the stream.
+            metadata (Dict[str, Any]): Any extra metadata to be passed to the validator.
+
+        Returns:
+            ValidationResult: Either a PassResult or a FailResult for the current chunk.
+        """
+        if chunk[-1].endswith((".", "?", "!")):
+            sentences = nltk.sent_tokenize(self.accumulation)
+
+            if sentences:
+                query_function = self.get_query_function(metadata)
+                return self.validate_each_sentence(
+                    sentences[-1], query_function, metadata, [sentences[-1]]
+                )
+        return PassResult(metadata=metadata)
+
     def validate(self, value: Any, metadata: Dict[str, Any]) -> ValidationResult:
         """Validation method for the `ProvenanceLLM` validator."""
 
@@ -262,9 +293,11 @@ class ProvenanceLLM(Validator):
         if embed_function is None:
             # Load model for embedding function
             MODEL = SentenceTransformer("paraphrase-MiniLM-L6-v2")
+
             # Create embed function
             def st_embed_function(sources: list[str]):
                 return MODEL.encode(sources)
+
             embed_function = st_embed_function
         return partial(
             self.query_vector_collection,
