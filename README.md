@@ -33,8 +33,8 @@ The primary intended use is for RAG applications to check if a text is hallucina
     - `numpy`
     - `nltk`
     - `tenacity`
-	- guardrails-ai>=0.4.0
-
+    - guardrails-ai>=0.4.0
+    
 * To use in an example: 
     - `sentence-transformers`
     - `chromadb`
