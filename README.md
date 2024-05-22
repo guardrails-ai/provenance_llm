@@ -1,7 +1,6 @@
 ## Overview
 
 | Developed by | Guardrails AI |
-| --- | --- |
 | Date of development | Feb 15, 2024 |
 | Validator type | RAG |
 | Blog | https://www.guardrailsai.com/blog/reduce-ai-hallucinations-provenance-guardrails |
@@ -23,19 +22,25 @@ Below is a step-wise breakdown of how the validator works:
 5. The `k` nearest source chunks are determined for the LLM output chunk.
 6. To evaluate whether the `k` nearest source chunks support the LLM output chunk, a call to an LLM is made to get a prediction.
 
-## Intended use
+### Intended use
 
 The primary intended use is for RAG applications to check if a text is hallucinated by establishing a source (i.e. provenance) for any LLM generated text. Out-of-scope use cases are general question answering without RAG or text grounding. Use this in combination with traditional RAG to achieve Retrieval-Augmented (Validated) Generation [RAVG].
 
-## Resources required
+## Requirements
 
 * Dependencies:
     - `litellm`
     - `numpy`
     - `nltk`
     - `tenacity`
-* To use in an example: `sentence-transformers` or `chromadb`
-* Foundation model access keys: Yes (depending on which model is used for embeddings)
+	- guardrails-ai>=0.4.0
+
+* To use in an example: 
+    - `sentence-transformers`
+    - `chromadb`
+
+* Foundation model access keys: 
+    - Yes (depending on which model is used for embeddings)
 
 ## Installation
 
@@ -110,7 +115,7 @@ Validation failed for field with errors: None of the following sentences in your
 - Pluto is the farthest planet from the sun.
 ```
 
-## API Reference
+# API Reference
 
 **`__init__(self, validation_method="sentence", llm_callable="gpt-3.5-turbo", top_k=3, max_tokens=2, on_fail="noop")`**
 <ul>
