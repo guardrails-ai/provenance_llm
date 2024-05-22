@@ -35,7 +35,7 @@ The primary intended use is for RAG applications to check if a text is hallucina
     - `tenacity`
     - guardrails-ai>=0.4.0
     
-* To use in an example: 
+* To use in an example:
     - `sentence-transformers`
     - `chromadb`
 
@@ -45,7 +45,7 @@ The primary intended use is for RAG applications to check if a text is hallucina
 ## Installation
 
 ```bash
-guardrails hub install hub://guardrails/provenance_llm
+$ guardrails hub install hub://guardrails/provenance_llm
 ```
 
 ## Usage Examples
@@ -133,7 +133,7 @@ Initializes a new instance of the Validator class.
 
 <br>
 
-**`__call__(self, value, metadata={}) → ValidationResult`**
+**`__call__(self, value, metadata={}) -> ValidationResult`**
 
 <ul>
 
