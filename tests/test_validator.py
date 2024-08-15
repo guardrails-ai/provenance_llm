@@ -3,8 +3,6 @@ import pytest
 from guardrails import Guard
 from pydantic import BaseModel, Field
 from sentence_transformers import SentenceTransformer
-import sys
-sys.path.append(".")
 from validator import ProvenanceLLM
 
 # Setup text sources
