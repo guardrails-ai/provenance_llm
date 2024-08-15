@@ -249,7 +249,6 @@ class ProvenanceLLM(Validator):
 
         # Check chunking strategy, size and overlap
         chunk_strategy = metadata.get("chunk_strategy", "full")
-        print(f"chunk_strategy: {chunk_strategy}")
         if chunk_strategy not in ["full", "sentence", "word", "char", "token"]:
             raise ValueError(
                 "`chunk_strategy` must be one of 'sentence', 'word', "
