@@ -248,8 +248,8 @@ class ProvenanceLLM(Validator):
             )
 
         # Check chunking strategy, size and overlap
-        chunk_strategy = metadata.get("chunk_strategy", "sentence")
-        if chunk_strategy not in ["sentence", "word", "char", "token"]:
+        chunk_strategy = metadata.get("chunk_strategy", "full")
+        if chunk_strategy not in ["full", "sentence", "word", "char", "token"]:
             raise ValueError(
                 "`chunk_strategy` must be one of 'sentence', 'word', "
                 "'char', or 'token'."
@@ -293,19 +293,25 @@ class ProvenanceLLM(Validator):
         chunks = list(itertools.chain.from_iterable(chunks))
 
         # Create embeddings
-        source_embeddings = np.array(embed_function(chunks)).squeeze()
-        query_embedding = embed_function(text).squeeze()
+        source_embeddings = np.array(embed_function(chunks))
+        query_embedding = embed_function(text)
+
+        # Ensure source_embeddings is 2D
+        if source_embeddings.ndim == 1:
+            source_embeddings = source_embeddings.reshape(1, -1)
+
+        # Ensure query_embedding is 1D
+        query_embedding = query_embedding.squeeze()
 
         # Compute distances using cosine similarity
         # and return top k nearest chunks
         cos_sim = 1 - (
-            np.dot(source_embeddings, query_embedding)
-            / (
-                np.linalg.norm(source_embeddings, axis=1)
-                * np.linalg.norm(query_embedding)
-            )
+                np.dot(source_embeddings, query_embedding)
+                / (
+                        np.linalg.norm(source_embeddings, axis=1)
+                        * np.linalg.norm(query_embedding)
+                )
         )
         top_indices = np.argsort(cos_sim)[:k]
         top_chunks = [chunks[j] for j in top_indices]
-
         return top_chunks

@@ -27,8 +27,8 @@ class ValidatorTestObject(BaseModel):
         validators=[
             ProvenanceLLM(
                 validation_method="sentence",
-                llm_callable="gpt-3.5-turbo",
-                top_k=3,
+                llm_callable="gpt-4o-mini",
+                top_k=1,
                 on_fail="exception",
             )
         ]
@@ -130,3 +130,23 @@ def test_fail_path(value, metadata):
     with pytest.raises(Exception):
         response = guard.parse(value, metadata=metadata)
         print("Fail path response", response)
+#
+def test_sources_one_chunk():
+    validator = ProvenanceLLM(
+        validation_method="full",
+        llm_callable="gpt-4o-mini",
+        top_k=1,
+    )
+    value = "The sun is a dog."
+    sources = ["The sun is a star."]
+    response = validator.validate(value, metadata={"sources": sources, "embed_function": embed_function})
+
+def test_sources_two_chunks():
+    validator = ProvenanceLLM(
+        validation_method="full",
+        llm_callable="gpt-4o-mini",
+        top_k=1,
+    )
+    value = "The sun is a dog."
+    sources = ["The sun is a star.", "Jupiter is the largest planet in the solar system."]
+    response = validator.validate(value, metadata={"sources": sources, "embed_function": embed_function})
