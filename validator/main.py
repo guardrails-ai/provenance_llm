@@ -8,6 +8,7 @@ from warnings import warn
 import nltk
 import numpy as np
 from guardrails.utils.docs_utils import get_chunks_from_text
+from guardrails.utils.validator_utils import PROVENANCE_V1_PROMPT
 from guardrails.validator_base import (
     FailResult,
     PassResult,
