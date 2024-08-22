@@ -1,4 +1,5 @@
 import os
+import re
 import itertools
 import warnings
 from functools import partial
@@ -8,7 +9,6 @@ from warnings import warn
 import nltk
 import numpy as np
 from guardrails.utils.docs_utils import get_chunks_from_text
-from guardrails.utils.validator_utils import PROVENANCE_V1_PROMPT
 from guardrails.validator_base import (
     FailResult,
     PassResult,
@@ -21,6 +21,47 @@ from litellm import completion, get_llm_provider
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 from sentence_transformers import SentenceTransformer
 
+PROVENANCE_V1_PROMPT = """Instruction:
+As an Attribution Validator, your task is to determine if the given contexts provide irrefutable evidence to support the claim. Follow these strict guidelines:
+
+Respond "Yes" ONLY if ALL of the following conditions are met:
+
+The contexts explicitly and unambiguously state information that fully confirms ALL aspects of the claim.
+There is NO room for alternative interpretations or assumptions.
+The support is direct and doesn't require complex inference chains.
+If numbers or specific details are mentioned in the claim, they MUST be exactly matched in the contexts.
+
+
+Respond "No" if ANY of the following are true:
+
+The contexts do not provide explicit information that fully substantiates every part of the claim.
+The claim requires any degree of inference or assumption not directly stated in the contexts.
+The contexts only partially support the claim or support it with slight differences in details.
+There is any ambiguity, vagueness, or room for interpretation in how the contexts relate to the claim.
+The claim includes any information not present in the contexts, even if it seems common knowledge.
+The contexts contradict any part of the claim, no matter how minor.
+
+
+Treat the contexts as the ONLY source of truth. Do not use any outside knowledge or assumptions.
+For multi-part claims, EVERY single part must be explicitly supported by the contexts for a "Yes" response.
+If there is ANY doubt whatsoever, respond with "No".
+Be extremely literal in your interpretation. Do not extrapolate or generalize from the given information.
+
+Provide your analysis in this format:
+<reasoning>
+
+Point 1
+Point 2
+Point 3 (if needed)
+</reasoning>
+
+
+<decision>Yes</decision> OR <decision>No</decision>
+Claim:
+{}
+Contexts:
+{}
+Response:"""
 
 @register_validator(name="guardrails/provenance_llm", data_type="string")
 class ProvenanceLLM(Validator):
@@ -187,6 +228,18 @@ class ProvenanceLLM(Validator):
                 fix_value="\n".join(supported_sentences),
             )
         return PassResult(metadata=metadata)
+    
+    def parse_response(self, response:str) -> bool:
+        response = response.lower()
+        # Extract decision
+        decision_match = re.search(r'<decision>(yes|no)</decision>', response)
+        decision = decision_match.group(1) if decision_match else None
+        if decision is None or decision == 'no':
+            return False
+        elif decision == 'yes':
+            return True
+        else:
+            return False
 
     def validate_full_text(
         self, value: Any, query_function: Callable, metadata: Dict[str, Any]
@@ -196,9 +249,12 @@ class ProvenanceLLM(Validator):
 
         # Self-evaluate LLM with entire text
         eval_response = self.evaluate_with_llm(value, query_function)
-        if eval_response == "yes":
+        print('eval response', eval_response)
+        passed = self.parse_response(eval_response)
+        print('passed', passed)
+        if passed == True:
             return PassResult(metadata=metadata)
-        if eval_response == "no":
+        if passed == False:
             return FailResult(
                 metadata=metadata,
                 error_message=(
