@@ -5,6 +5,8 @@ import warnings
 from functools import partial
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from warnings import warn
+from transformers import pipeline, AutoTokenizer
+import torch
 
 import nltk
 import numpy as np
@@ -166,8 +168,21 @@ class ProvenanceLLM(Validator):
             response (str): String representing the LLM response.
         """
         return self._llm_callable(prompt)
+    
+    def evaluate_with_vectara(self, text:str) -> bool:
+        classifier = pipeline(
+            "text-classification",
+            model="vectara/hallucination_evaluation_model",
+            tokenizer=AutoTokenizer.from_pretrained("google/flan-t5-base"),
+            trust_remote_code=True,
+            device="cpu" if torch.cuda.is_available() else "cpu",
+        )
+        result = classifier(text, batch_size=1)
+        print(result)
+        return result
+    
 
-    def evaluate_with_llm(self, text: str, query_function: Callable) -> str:
+    def evaluate_with_llm(self, text: str, query_function: Callable, pass_on_invalid: bool) -> bool:
         """Validate that the LLM-generated text is supported by the provided
         contexts.
 
@@ -186,35 +201,28 @@ class ProvenanceLLM(Validator):
 
         # Get evaluation response
         eval_response = self.call_llm(prompt)
-        return eval_response
+        return self.parse_response(eval_response, pass_on_invalid=pass_on_invalid)
 
     def validate_each_sentence(
         self, value: Any, query_function: Callable, metadata: Dict[str, Any]
     ) -> ValidationResult:
         """Validate each sentence in the response."""
         pass_on_invalid = metadata.get("pass_on_invalid", False)  # Default to False
+        use_vectara = metadata.get("use_vectara", False)
 
         # Split the value into sentences using nltk sentence tokenizer.
         sentences = nltk.sent_tokenize(value)
 
         unsupported_sentences, supported_sentences = [], []
         for sentence in sentences:
-            eval_response = self.evaluate_with_llm(sentence, query_function)
-            if eval_response == "yes":
-                supported_sentences.append(sentence)
-            elif eval_response == "no":
-                unsupported_sentences.append(sentence)
+            if use_vectara:
+                eval_response = self.evaluate_with_vectara(sentence)
             else:
-                if pass_on_invalid:
-                    warn(
-                        "The LLM returned an invalid response. Considering the sentence as supported..."
-                    )
-                    supported_sentences.append(sentence)
-                else:
-                    warn(
-                        "The LLM returned an invalid response. Considering the sentence as unsupported..."
-                    )
-                    unsupported_sentences.append(sentence)
+                eval_response = self.evaluate_with_llm(sentence, query_function, pass_on_invalid=pass_on_invalid)
+            if eval_response == True:
+                supported_sentences.append(sentence)
+            elif eval_response == False:
+                unsupported_sentences.append(sentence)
 
         if unsupported_sentences:
             unsupported_sentences = "- " + "\n- ".join(unsupported_sentences)
@@ -229,8 +237,9 @@ class ProvenanceLLM(Validator):
             )
         return PassResult(metadata=metadata)
     
-    def parse_response(self, response:str) -> bool:
+    def parse_response(self, response:str, pass_on_invalid:bool) -> bool:
         response = response.lower()
+        print('response!', response)
         # Extract decision
         decision_match = re.search(r'<decision>(yes|no)</decision>', response)
         decision = decision_match.group(1) if decision_match else None
@@ -239,18 +248,29 @@ class ProvenanceLLM(Validator):
         elif decision == 'yes':
             return True
         else:
-            return False
+            if pass_on_invalid:
+                warn(
+                        "The LLM returned an invalid response. Considering the sentence as supported..."
+                    )
+                return True
+            else:
+                warn(
+                        "The LLM returned an invalid response. Considering the sentence as unsupported..."
+                    )
+                return False
 
     def validate_full_text(
         self, value: Any, query_function: Callable, metadata: Dict[str, Any]
     ) -> ValidationResult:
         """Validate the entire LLM text."""
         pass_on_invalid = metadata.get("pass_on_invalid", False)  # Default to False
+        use_vectara = metadata.get("use_vectara", False)
 
         # Self-evaluate LLM with entire text
-        eval_response = self.evaluate_with_llm(value, query_function)
-        print('eval response', eval_response)
-        passed = self.parse_response(eval_response)
+        if use_vectara:
+            passed = self.evaluate_with_llm(value, query_function, pass_on_invalid=pass_on_invalid)
+        else:
+            passed = self.evaluate_with_vectara(value)
         print('passed', passed)
         if passed == True:
             return PassResult(metadata=metadata)
