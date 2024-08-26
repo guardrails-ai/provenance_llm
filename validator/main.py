@@ -178,8 +178,10 @@ class ProvenanceLLM(Validator):
             device="cpu" if torch.cuda.is_available() else "cpu",
         )
         result = classifier(text, batch_size=1)
-        print(result)
-        return result
+        if result[0]['label'] == 'consistent':
+            return True
+        if result[0]['label'] == 'hallucinated':
+            return False
     
 
     def evaluate_with_llm(self, text: str, query_function: Callable, pass_on_invalid: bool) -> bool:
@@ -239,7 +241,6 @@ class ProvenanceLLM(Validator):
     
     def parse_response(self, response:str, pass_on_invalid:bool) -> bool:
         response = response.lower()
-        print('response!', response)
         # Extract decision
         decision_match = re.search(r'<decision>(yes|no)</decision>', response)
         decision = decision_match.group(1) if decision_match else None
@@ -265,13 +266,11 @@ class ProvenanceLLM(Validator):
         """Validate the entire LLM text."""
         pass_on_invalid = metadata.get("pass_on_invalid", False)  # Default to False
         use_vectara = metadata.get("use_vectara", False)
-
         # Self-evaluate LLM with entire text
         if use_vectara:
-            passed = self.evaluate_with_llm(value, query_function, pass_on_invalid=pass_on_invalid)
-        else:
             passed = self.evaluate_with_vectara(value)
-        print('passed', passed)
+        else:
+            passed = self.evaluate_with_llm(value, query_function, pass_on_invalid=pass_on_invalid)
         if passed == True:
             return PassResult(metadata=metadata)
         if passed == False:
