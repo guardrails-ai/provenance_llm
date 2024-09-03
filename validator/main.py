@@ -169,7 +169,7 @@ class ProvenanceLLM(Validator):
         """
         return self._llm_callable(prompt)
     
-    def evaluate_with_vectara(self, text:str) -> bool:
+    def evaluate_with_vectara(self, text:str, pass_on_invalid:bool) -> bool:
         classifier = pipeline(
             "text-classification",
             model="vectara/hallucination_evaluation_model",
@@ -182,7 +182,16 @@ class ProvenanceLLM(Validator):
             return True
         if result[0]['label'] == 'hallucinated':
             return False
-    
+        if pass_on_invalid:
+            warn(
+                    "The Vectara returned an invalid response. Considering the sentence as supported..."
+                )
+            return True
+        else:
+            warn(
+                    "The Vectara returned an invalid response. Considering the sentence as unsupported..."
+                )
+            return False
 
     def evaluate_with_llm(self, text: str, query_function: Callable, pass_on_invalid: bool) -> bool:
         """Validate that the LLM-generated text is supported by the provided
@@ -218,7 +227,7 @@ class ProvenanceLLM(Validator):
         unsupported_sentences, supported_sentences = [], []
         for sentence in sentences:
             if use_vectara:
-                eval_response = self.evaluate_with_vectara(sentence)
+                eval_response = self.evaluate_with_vectara(sentence, pass_on_invalid=pass_on_invalid)
             else:
                 eval_response = self.evaluate_with_llm(sentence, query_function, pass_on_invalid=pass_on_invalid)
             if eval_response == True:
@@ -268,7 +277,7 @@ class ProvenanceLLM(Validator):
         use_vectara = metadata.get("use_vectara", False)
         # Self-evaluate LLM with entire text
         if use_vectara:
-            passed = self.evaluate_with_vectara(value)
+            passed = self.evaluate_with_vectara(value, pass_on_invalid=pass_on_invalid)
         else:
             passed = self.evaluate_with_llm(value, query_function, pass_on_invalid=pass_on_invalid)
         if passed == True:
