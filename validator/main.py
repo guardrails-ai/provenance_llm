@@ -8,7 +8,6 @@ from warnings import warn
 import nltk
 import numpy as np
 from guardrails.utils.docs_utils import get_chunks_from_text
-from guardrails.utils.validator_utils import PROVENANCE_V1_PROMPT
 from guardrails.validator_base import (
     FailResult,
     PassResult,
@@ -20,6 +19,44 @@ from guardrails.stores.context import get_call_kwarg
 from litellm import completion, get_llm_provider
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 from sentence_transformers import SentenceTransformer
+
+
+PROVENANCE_LLM_PROMPT = """You will be given a context and a claim. Your task is to determine whether the claim is supported by the information provided in the context or not.
+
+First, carefully read the following context:
+
+<context>
+{context}
+</context>
+
+Now, consider this claim:
+
+<claim>
+{claim}
+</claim>
+
+To determine if the claim is supported by the context, follow these steps:
+
+1. Analyze the claim and break it down into its key components.
+2. Search for evidence in the context that either supports or contradicts these components.
+3. Consider both explicit statements and information that can be reasonably inferred from the context.
+4. Be aware of any potential contradictions or inconsistencies between the claim and the context.
+
+Before making your final determination, provide your reasoning in detail. Explain how you arrived at your conclusion, citing specific evidence from the context where applicable.
+
+After presenting your reasoning, state your final determination. Use "NO" if the claim is not supported by the context or if there are any ambiguities in pronoun references that make the claim's validity uncertain.
+
+Remember to base your analysis solely on the information provided in the context. Do not introduce external knowledge or make assumptions beyond what can be reasonably inferred from the given information.
+
+Present your complete response in the following format:
+<analysis>
+[Your detailed reasoning and analysis here]
+</analysis>
+
+<supported>
+[YES] or [NO]
+</supported>
+"""
 
 
 @register_validator(name="guardrails/provenance_llm", data_type="string")
@@ -87,23 +124,46 @@ class ProvenanceLLM(Validator):
             llm_callable: Either the model name string for LiteLLM,
                 or a callable that accepts a prompt and returns a response.
         """
+
+        def extract_tagged_text(text, tag_name):
+            start_tag = f"<{tag_name}>"
+            end_tag = f"</{tag_name}>"
+            start_index = text.find(start_tag)
+            end_index = text.find(end_tag)
+            if start_index != -1 and end_index != -1:
+                return text[start_index + len(start_tag) : end_index].strip()
+            return None
+
+        def remove_non_alphabetic(text):
+            return "".join(char for char in text if char.isalpha())
+
+        def process_output(text, tag_name):
+            extracted_text = extract_tagged_text(text, tag_name)
+            if extracted_text is None:
+                return None
+            return remove_non_alphabetic(extracted_text).strip().lower()
+
         if isinstance(llm_callable, str):
             # Setup a LiteLLM callable
             def litellm_callable(prompt: str) -> str:
                 # Get the LLM response
                 messages = [{"content": prompt, "role": "user"}]
-                
+
                 kwargs = {}
                 _model, provider, *_rest = get_llm_provider(llm_callable)
                 if provider == "openai":
-                    kwargs["api_key"] = get_call_kwarg("api_key") or os.environ.get("OPENAI_API_KEY")
-                
+                    kwargs["api_key"] = get_call_kwarg("api_key") or os.environ.get(
+                        "OPENAI_API_KEY"
+                    )
+
                 try:
                     # We should allow users to pass kwargs to this somehow
-                    val_response = completion(model=llm_callable, messages=messages, **kwargs)
+                    val_response = completion(
+                        model=llm_callable, messages=messages, **kwargs
+                    )
                     # Get the response and strip and lower it
                     val_response = val_response.choices[0].message.content  # type: ignore
-                    val_response = val_response.strip().lower()
+                    val_response = process_output(val_response, "supported")
                 except Exception as e:
                     raise RuntimeError(
                         f"Error getting response from the LLM: {e}"
@@ -141,7 +201,8 @@ class ProvenanceLLM(Validator):
         relevant_chunks = query_function(text=text, k=self._top_k)
 
         # Create the prompt to ask the LLM
-        prompt = PROVENANCE_V1_PROMPT.format(text, "\n".join(relevant_chunks))
+        context = "\n".join(relevant_chunks)
+        prompt = PROVENANCE_LLM_PROMPT.format(context=context, claim=text)
 
         # Get evaluation response
         eval_response = self.call_llm(prompt)
@@ -262,9 +323,11 @@ class ProvenanceLLM(Validator):
         if embed_function is None:
             # Load model for embedding function
             MODEL = SentenceTransformer("paraphrase-MiniLM-L6-v2")
+
             # Create embed function
             def st_embed_function(sources: list[str]):
                 return MODEL.encode(sources)
+
             embed_function = st_embed_function
         return partial(
             self.query_vector_collection,
@@ -306,11 +369,11 @@ class ProvenanceLLM(Validator):
         # Compute distances using cosine similarity
         # and return top k nearest chunks
         cos_sim = 1 - (
-                np.dot(source_embeddings, query_embedding)
-                / (
-                        np.linalg.norm(source_embeddings, axis=1)
-                        * np.linalg.norm(query_embedding)
-                )
+            np.dot(source_embeddings, query_embedding)
+            / (
+                np.linalg.norm(source_embeddings, axis=1)
+                * np.linalg.norm(query_embedding)
+            )
         )
         top_indices = np.argsort(cos_sim)[:k]
         top_chunks = [chunks[j] for j in top_indices]
