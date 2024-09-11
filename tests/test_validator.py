@@ -1,7 +1,4 @@
 import numpy as np
-import pytest
-from guardrails import Guard
-from pydantic import BaseModel, Field
 from sentence_transformers import SentenceTransformer
 from validator import ProvenanceLLM
 
@@ -25,9 +22,10 @@ def test_sources_one_chunk():
         llm_callable="gpt-4o-mini",
         top_k=1,
     )
-    value = "The sun is a dog."
+    value = "The sun is a star."
     sources = ["The sun is a star."]
     response = validator.validate(value, metadata={"sources": sources, "embed_function": embed_function})
+    assert response.outcome == 'pass', 'Expected outcome to be "pass"'
 
 def test_sources_two_chunks():
     validator = ProvenanceLLM(
@@ -38,3 +36,4 @@ def test_sources_two_chunks():
     value = "The sun is a dog."
     sources = ["The sun is a star.", "Jupiter is the largest planet in the solar system."]
     response = validator.validate(value, metadata={"sources": sources, "embed_function": embed_function})
+    assert response.outcome == 'fail', 'Expected outcome to be "fail"'

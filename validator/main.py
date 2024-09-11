@@ -1,4 +1,3 @@
-import os
 import itertools
 import warnings
 from functools import partial
@@ -15,8 +14,7 @@ from guardrails.validator_base import (
     Validator,
     register_validator,
 )
-from guardrails.stores.context import get_call_kwarg
-from litellm import completion, get_llm_provider
+from litellm import completion
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 from sentence_transformers import SentenceTransformer
 
@@ -124,46 +122,20 @@ class ProvenanceLLM(Validator):
             llm_callable: Either the model name string for LiteLLM,
                 or a callable that accepts a prompt and returns a response.
         """
-
-        def extract_tagged_text(text, tag_name):
-            start_tag = f"<{tag_name}>"
-            end_tag = f"</{tag_name}>"
-            start_index = text.find(start_tag)
-            end_index = text.find(end_tag)
-            if start_index != -1 and end_index != -1:
-                return text[start_index + len(start_tag) : end_index].strip()
-            return None
-
-        def remove_non_alphabetic(text):
-            return "".join(char for char in text if char.isalpha())
-
-        def process_output(text, tag_name):
-            extracted_text = extract_tagged_text(text, tag_name)
-            if extracted_text is None:
-                return None
-            return remove_non_alphabetic(extracted_text).strip().lower()
-
         if isinstance(llm_callable, str):
             # Setup a LiteLLM callable
             def litellm_callable(prompt: str) -> str:
                 # Get the LLM response
                 messages = [{"content": prompt, "role": "user"}]
 
-                kwargs = {}
-                _model, provider, *_rest = get_llm_provider(llm_callable)
-                if provider == "openai":
-                    kwargs["api_key"] = get_call_kwarg("api_key") or os.environ.get(
-                        "OPENAI_API_KEY"
-                    )
-
                 try:
                     # We should allow users to pass kwargs to this somehow
-                    val_response = completion(
-                        model=llm_callable, messages=messages, **kwargs
-                    )
+                    val_response = completion(model=llm_callable, messages=messages)
                     # Get the response and strip and lower it
                     val_response = val_response.choices[0].message.content  # type: ignore
-                    val_response = process_output(val_response, "supported")
+                    if val_response is None:
+                        raise RuntimeError("Error getting response from the LLM.")
+                    val_response = val_response.strip().lower()
                 except Exception as e:
                     raise RuntimeError(
                         f"Error getting response from the LLM: {e}"
@@ -186,7 +158,7 @@ class ProvenanceLLM(Validator):
         """
         return self._llm_callable(prompt)
 
-    def evaluate_with_llm(self, text: str, query_function: Callable) -> str:
+    def evaluate_with_llm(self, text: str, query_function: Callable) -> str | None:
         """Validate that the LLM-generated text is supported by the provided
         contexts.
 
@@ -197,6 +169,26 @@ class ProvenanceLLM(Validator):
         Returns:
             eval_response (str): The evaluation response from the LLM.
         """
+
+        def extract_tagged_text(text, tag_name):
+            start_tag = f"<{tag_name}>"
+            end_tag = f"</{tag_name}>"
+            start_index = text.find(start_tag)
+            end_index = text.find(end_tag)
+            if start_index != -1 and end_index != -1:
+                return text[start_index + len(start_tag) : end_index].strip()
+            return None
+
+        def remove_non_alphabetic(text):
+            return "".join(char for char in text if char.isalpha())
+
+        def process_output(text, tag_name):
+            extracted_text = extract_tagged_text(text, tag_name)
+            if extracted_text is None:
+                return None
+            return remove_non_alphabetic(extracted_text).strip().lower()
+
+
         # Get the relevant chunks using the query function
         relevant_chunks = query_function(text=text, k=self._top_k)
 
@@ -206,7 +198,7 @@ class ProvenanceLLM(Validator):
 
         # Get evaluation response
         eval_response = self.call_llm(prompt)
-        return eval_response
+        return process_output(eval_response, "supported")
 
     def validate_each_sentence(
         self, value: Any, query_function: Callable, metadata: Dict[str, Any]
