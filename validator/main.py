@@ -8,7 +8,6 @@ from warnings import warn
 import nltk
 import numpy as np
 from guardrails.utils.docs_utils import get_chunks_from_text
-from guardrails.utils.validator_utils import PROVENANCE_V1_PROMPT
 from guardrails.validator_base import (
     FailResult,
     PassResult,
@@ -20,6 +19,18 @@ from guardrails.stores.context import get_call_kwarg
 from litellm import completion, get_llm_provider
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 from sentence_transformers import SentenceTransformer
+
+PROVENANCE_V1_PROMPT = """Instruction:
+As an Attribution Validator, you task is to verify whether the following contexts support the claim:
+
+Claim:
+{}
+
+Contexts:
+{}
+
+Just respond with a "Yes" or "No" to indicate whether the given contexts support the claim.
+Response:"""
 
 
 @register_validator(name="guardrails/provenance_llm", data_type="string")
