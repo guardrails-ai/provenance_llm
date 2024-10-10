@@ -139,7 +139,7 @@ def test_sources_one_chunk():
     )
     value = "The sun is a dog."
     sources = ["The sun is a star."]
-    response = validator.validate(value, metadata={"sources": sources, "embed_function": embed_function})
+    validator.validate(value, metadata={"sources": sources, "embed_function": embed_function})
 
 def test_sources_two_chunks():
     validator = ProvenanceLLM(
@@ -149,4 +149,4 @@ def test_sources_two_chunks():
     )
     value = "The sun is a dog."
     sources = ["The sun is a star.", "Jupiter is the largest planet in the solar system."]
-    response = validator.validate(value, metadata={"sources": sources, "embed_function": embed_function})
+    validator.validate(value, metadata={"sources": sources, "embed_function": embed_function})
