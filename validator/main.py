@@ -197,7 +197,7 @@ class ProvenanceLLM(Validator):
         prompt = PROVENANCE_PROMPT.format(CONTEXT="\n".join(relevant_chunks), CLAIM=text)
 
         # Get evaluation response
-        eval_response = parse_output(self.call_llm(prompt), 'suppported')
+        eval_response = parse_output(self.call_llm(prompt), 'supported')
 
         return eval_response
 
