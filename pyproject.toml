@@ -1,6 +1,6 @@
 [project]
 name = "provenance_llm"
-version = "0.0.0"
+version = "0.0.1"
 description = "Validates that the LLM-generated text is supported by the provided contexts using semantic similarity and LLM-based evaluation."
 authors = [
     {name = "Guardrails AI", email = "contact@guardrailsai.com"}
