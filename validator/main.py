@@ -296,7 +296,7 @@ class ProvenanceLLM(Validator):
                 )
             return query_fn
 
-        if sources is None:
+        if sources is None and query_fn is None:
             raise ValueError(
                 "You must provide either `query_function` or `sources` in metadata."
             )
