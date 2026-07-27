@@ -1,6 +1,6 @@
 # ⚠️ This validator has moved
 
-This validator now lives in the [Guardrails Hub monorepo](https://github.com/guardrails-ai/guardrails-hub-monorepo/tree/main/provenance_llm).
+This validator now lives in the [Guardrails Hub monorepo](https://github.com/guardrails-ai/guardrails-hub-monorepo/tree/main/provenance_llm/py).
 **This repository is archived and no longer maintained** — please open issues and pull
 requests on the monorepo instead.
 
